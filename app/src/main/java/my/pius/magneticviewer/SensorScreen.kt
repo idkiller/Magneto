@@ -1,0 +1,207 @@
+package my.pius.magneticviewer
+
+import android.content.Context
+import android.hardware.Sensor
+import android.hardware.SensorEvent
+import android.hardware.SensorEventListener
+import android.hardware.SensorManager
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.material3.Button
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.viewinterop.AndroidView
+import com.github.mikephil.charting.charts.LineChart
+import com.github.mikephil.charting.components.XAxis
+import com.github.mikephil.charting.data.Entry
+import com.github.mikephil.charting.data.LineData
+import com.github.mikephil.charting.data.LineDataSet
+
+// Use a relative time offset (in seconds) for the x-axis
+data class SensorDataPoint(val timeOffset: Float, val x: Float, val y: Float, val z: Float)
+
+@Composable
+fun SensorScreen() {
+    val context = LocalContext.current
+    val sensorManager = remember { context.getSystemService(Context.SENSOR_SERVICE) as SensorManager }
+
+    var isRunning by remember { mutableStateOf(false) }
+    var startTime by remember { mutableStateOf(0L) }
+
+    val magneticFieldData = remember { mutableStateListOf<SensorDataPoint>() }
+    val globalMagneticFieldData = remember { mutableStateListOf<SensorDataPoint>() }
+
+    fun rotateByQuaternion(vec: FloatArray, quat: FloatArray): FloatArray {
+        val qw = quat[0]; val qx = quat[1]; val qy = quat[2]; val qz = quat[3]
+        val vx = vec[0]; val vy = vec[1]; val vz = vec[2]
+
+        val ix = qw * vx + qy * vz - qz * vy
+        val iy = qw * vy + qz * vx - qx * vz
+        val iz = qw * vz + qx * vy - qy * vx
+        val iw = -qx * vx - qy * vy - qz * vz
+
+        return floatArrayOf(
+            ix * qw + iw * -qx + iy * -qz - iz * -qy,
+            iy * qw + iw * -qy + iz * -qx - ix * -qz,
+            iz * qw + iw * -qz + ix * -qy - iy * -qx
+        )
+    }
+
+    // Use `remember` to create a single, stable listener instance
+    val sensorListener = remember {
+        object : SensorEventListener {
+            // Initialize with identity quaternion [w, x, y, z] for no rotation
+            private val rotationQuaternion = floatArrayOf(1f, 0f, 0f, 0f)
+
+            override fun onSensorChanged(event: SensorEvent?) {
+                if (event == null || !isRunning) return
+
+                when (event.sensor.type) {
+                    Sensor.TYPE_GAME_ROTATION_VECTOR -> {
+                        SensorManager.getQuaternionFromVector(rotationQuaternion, event.values)
+                    }
+                    Sensor.TYPE_MAGNETIC_FIELD -> {
+                        // Use a relative timestamp in seconds for the chart's X-axis
+                        val timeOffset = (System.currentTimeMillis() - startTime).toFloat() / 1000f
+                        val magneticValues = event.values
+
+                        magneticFieldData.add(SensorDataPoint(timeOffset, magneticValues[0], magneticValues[1], magneticValues[2]))
+                        while (magneticFieldData.isNotEmpty() && magneticFieldData.first().timeOffset < timeOffset - 3f) {
+                            magneticFieldData.removeAt(0)
+                        }
+
+                        // Create the inverse (conjugate) of the rotation quaternion
+                        val inverseQuaternion = floatArrayOf(
+                            rotationQuaternion[0],
+                            -rotationQuaternion[1],
+                            -rotationQuaternion[2],
+                            -rotationQuaternion[3]
+                        )
+                        val globalMagneticField = rotateByQuaternion(magneticValues, inverseQuaternion)
+                        globalMagneticFieldData.add(SensorDataPoint(timeOffset, globalMagneticField[0], globalMagneticField[1], globalMagneticField[2]))
+                        while (globalMagneticFieldData.isNotEmpty() && globalMagneticFieldData.first().timeOffset < timeOffset - 3f) {
+                            globalMagneticFieldData.removeAt(0)
+                        }
+                    }
+                }
+            }
+
+            override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {}
+        }
+    }
+
+    DisposableEffect(isRunning) {
+        val rotationVectorSensor = sensorManager.getDefaultSensor(Sensor.TYPE_GAME_ROTATION_VECTOR)
+        val magneticFieldSensor = sensorManager.getDefaultSensor(Sensor.TYPE_MAGNETIC_FIELD)
+
+        if (isRunning) {
+            // Set start time and clear previous data
+            startTime = System.currentTimeMillis()
+            magneticFieldData.clear()
+            globalMagneticFieldData.clear()
+
+            sensorManager.registerListener(sensorListener, rotationVectorSensor, SensorManager.SENSOR_DELAY_UI)
+            sensorManager.registerListener(sensorListener, magneticFieldSensor, SensorManager.SENSOR_DELAY_UI)
+        }
+
+        onDispose {
+            // This is called when the effect leaves the composition or `isRunning` changes.
+            // It ensures the listener is always unregistered.
+            sensorManager.unregisterListener(sensorListener)
+        }
+    }
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .statusBarsPadding()
+            .navigationBarsPadding()
+            .padding(16.dp)
+    ) {
+
+        Text("Device Magnetic Field (X, Y, Z)")
+        Chart(data = magneticFieldData.toList()) // Use toList to pass a stable copy for recomposition
+        Spacer(modifier = Modifier.height(16.dp))
+
+        Text("Global Magnetic Field (X, Y, Z)")
+        Chart(data = globalMagneticFieldData.toList())
+        Spacer(modifier = Modifier.height(16.dp))
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceEvenly
+        ) {
+            Button(onClick = { isRunning = true }) {
+                Text("Start")
+            }
+            Button(onClick = { isRunning = false }) {
+                Text("Stop")
+            }
+        }
+    }
+}
+
+@Composable
+fun Chart(data: List<SensorDataPoint>) {
+    // The `data` list is now guaranteed to trigger recomposition correctly.
+    val entriesX = data.map { Entry(it.timeOffset, it.x) }
+    val entriesY = data.map { Entry(it.timeOffset, it.y) }
+    val entriesZ = data.map { Entry(it.timeOffset, it.z) }
+
+    val dataSetX = LineDataSet(entriesX, "X").apply {
+        color = Color.Red.toArgb()
+        setDrawCircles(false)
+        valueTextColor = Color.Transparent.toArgb()
+    }
+    val dataSetY = LineDataSet(entriesY, "Y").apply {
+        color = Color.Green.toArgb()
+        setDrawCircles(false)
+        valueTextColor = Color.Transparent.toArgb()
+    }
+    val dataSetZ = LineDataSet(entriesZ, "Z").apply {
+        color = Color.Blue.toArgb()
+        setDrawCircles(false)
+        valueTextColor = Color.Transparent.toArgb()
+    }
+
+    val lineData = LineData(dataSetX, dataSetY, dataSetZ)
+
+    AndroidView(
+        factory = { context ->
+            LineChart(context).apply {
+                description.isEnabled = false
+                xAxis.position = XAxis.XAxisPosition.BOTTOM
+                axisRight.isEnabled = false
+                // Improve performance for real-time data
+                setHardwareAccelerationEnabled(true)
+            }
+        },
+        update = { chart ->
+            chart.data = lineData
+            chart.notifyDataSetChanged()
+            chart.invalidate()
+        },
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(250.dp)
+    )
+}

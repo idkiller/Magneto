@@ -48,7 +48,9 @@ fun SensorScreen() {
     var startTime by remember { mutableStateOf(0L) }
 
     val magneticFieldData = remember { mutableStateListOf<SensorDataPoint>() }
-    val globalMagneticFieldData = remember { mutableStateListOf<SensorDataPoint>() }
+    val globalMagneticFieldDataGame = remember { mutableStateListOf<SensorDataPoint>() }
+    val globalMagneticFieldDataRotation = remember { mutableStateListOf<SensorDataPoint>() }
+    val globalMagneticFieldDataTilt = remember { mutableStateListOf<SensorDataPoint>() }
 
     fun rotateByQuaternion(vec: FloatArray, quat: FloatArray): FloatArray {
         val qw = quat[0]; val qx = quat[1]; val qy = quat[2]; val qz = quat[3]
@@ -71,6 +73,11 @@ fun SensorScreen() {
         object : SensorEventListener {
             // Initialize with identity quaternion [w, x, y, z] for no rotation
             private val rotationQuaternion = floatArrayOf(1f, 0f, 0f, 0f)
+            private val rotationQuaternionFused = floatArrayOf(1f, 0f, 0f, 0f)
+            private val gravity = FloatArray(3)
+            private val geomagnetic = FloatArray(3)
+            private var hasGravity = false
+            private var hasMagnetic = false
 
             override fun onSensorChanged(event: SensorEvent?) {
                 if (event == null || !isRunning) return
@@ -79,27 +86,74 @@ fun SensorScreen() {
                     Sensor.TYPE_GAME_ROTATION_VECTOR -> {
                         SensorManager.getQuaternionFromVector(rotationQuaternion, event.values)
                     }
+                    Sensor.TYPE_ROTATION_VECTOR -> {
+                        SensorManager.getQuaternionFromVector(rotationQuaternionFused, event.values)
+                    }
+                    Sensor.TYPE_ACCELEROMETER -> {
+                        // Gravity vector is used to tilt-compensate the magnetometer with getRotationMatrix
+                        System.arraycopy(event.values, 0, gravity, 0, gravity.size)
+                        hasGravity = true
+                    }
                     Sensor.TYPE_MAGNETIC_FIELD -> {
                         // Use a relative timestamp in seconds for the chart's X-axis
                         val timeOffset = (System.currentTimeMillis() - startTime).toFloat() / 1000f
-                        val magneticValues = event.values
+                        val magneticValues = event.values.clone()
+
+                        System.arraycopy(magneticValues, 0, geomagnetic, 0, geomagnetic.size)
+                        hasMagnetic = true
 
                         magneticFieldData.add(SensorDataPoint(timeOffset, magneticValues[0], magneticValues[1], magneticValues[2]))
                         while (magneticFieldData.isNotEmpty() && magneticFieldData.first().timeOffset < timeOffset - 3f) {
                             magneticFieldData.removeAt(0)
                         }
 
-                        // Create the inverse (conjugate) of the rotation quaternion
                         val inverseQuaternion = floatArrayOf(
                             rotationQuaternion[0],
                             -rotationQuaternion[1],
                             -rotationQuaternion[2],
                             -rotationQuaternion[3]
                         )
-                        val globalMagneticField = rotateByQuaternion(magneticValues, inverseQuaternion)
-                        globalMagneticFieldData.add(SensorDataPoint(timeOffset, globalMagneticField[0], globalMagneticField[1], globalMagneticField[2]))
-                        while (globalMagneticFieldData.isNotEmpty() && globalMagneticFieldData.first().timeOffset < timeOffset - 3f) {
-                            globalMagneticFieldData.removeAt(0)
+                        val globalMagneticFieldGame = rotateByQuaternion(magneticValues, inverseQuaternion)
+                        globalMagneticFieldDataGame.add(
+                            SensorDataPoint(timeOffset, globalMagneticFieldGame[0], globalMagneticFieldGame[1], globalMagneticFieldGame[2])
+                        )
+                        while (globalMagneticFieldDataGame.isNotEmpty() && globalMagneticFieldDataGame.first().timeOffset < timeOffset - 3f) {
+                            globalMagneticFieldDataGame.removeAt(0)
+                        }
+
+                        val inverseQuaternionFused = floatArrayOf(
+                            rotationQuaternionFused[0],
+                            -rotationQuaternionFused[1],
+                            -rotationQuaternionFused[2],
+                            -rotationQuaternionFused[3]
+                        )
+                        val globalMagneticFieldRotation = rotateByQuaternion(magneticValues, inverseQuaternionFused)
+                        globalMagneticFieldDataRotation.add(
+                            SensorDataPoint(
+                                timeOffset,
+                                globalMagneticFieldRotation[0],
+                                globalMagneticFieldRotation[1],
+                                globalMagneticFieldRotation[2]
+                            )
+                        )
+                        while (globalMagneticFieldDataRotation.isNotEmpty() && globalMagneticFieldDataRotation.first().timeOffset < timeOffset - 3f) {
+                            globalMagneticFieldDataRotation.removeAt(0)
+                        }
+
+                        if (hasGravity && hasMagnetic) {
+                            val rotationMatrix = FloatArray(9)
+                            val inclination = FloatArray(9)
+                            if (SensorManager.getRotationMatrix(rotationMatrix, inclination, gravity, geomagnetic)) {
+                                // Transform device magnetic vector into world (east-north-up) coordinates
+                                val globalX = rotationMatrix[0] * magneticValues[0] + rotationMatrix[1] * magneticValues[1] + rotationMatrix[2] * magneticValues[2]
+                                val globalY = rotationMatrix[3] * magneticValues[0] + rotationMatrix[4] * magneticValues[1] + rotationMatrix[5] * magneticValues[2]
+                                val globalZ = rotationMatrix[6] * magneticValues[0] + rotationMatrix[7] * magneticValues[1] + rotationMatrix[8] * magneticValues[2]
+
+                                globalMagneticFieldDataTilt.add(SensorDataPoint(timeOffset, globalX, globalY, globalZ))
+                                while (globalMagneticFieldDataTilt.isNotEmpty() && globalMagneticFieldDataTilt.first().timeOffset < timeOffset - 3f) {
+                                    globalMagneticFieldDataTilt.removeAt(0)
+                                }
+                            }
                         }
                     }
                 }
@@ -111,15 +165,21 @@ fun SensorScreen() {
 
     DisposableEffect(isRunning) {
         val rotationVectorSensor = sensorManager.getDefaultSensor(Sensor.TYPE_GAME_ROTATION_VECTOR)
+        val rotationVectorFusedSensor = sensorManager.getDefaultSensor(Sensor.TYPE_ROTATION_VECTOR)
+        val accelerometerSensor = sensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)
         val magneticFieldSensor = sensorManager.getDefaultSensor(Sensor.TYPE_MAGNETIC_FIELD)
 
         if (isRunning) {
             // Set start time and clear previous data
             startTime = System.currentTimeMillis()
             magneticFieldData.clear()
-            globalMagneticFieldData.clear()
+            globalMagneticFieldDataGame.clear()
+            globalMagneticFieldDataRotation.clear()
+            globalMagneticFieldDataTilt.clear()
 
             sensorManager.registerListener(sensorListener, rotationVectorSensor, SensorManager.SENSOR_DELAY_UI)
+            sensorManager.registerListener(sensorListener, rotationVectorFusedSensor, SensorManager.SENSOR_DELAY_UI)
+            sensorManager.registerListener(sensorListener, accelerometerSensor, SensorManager.SENSOR_DELAY_UI)
             sensorManager.registerListener(sensorListener, magneticFieldSensor, SensorManager.SENSOR_DELAY_UI)
         }
 
@@ -142,8 +202,16 @@ fun SensorScreen() {
         Chart(data = magneticFieldData.toList()) // Use toList to pass a stable copy for recomposition
         Spacer(modifier = Modifier.height(16.dp))
 
-        Text("Global Magnetic Field (X, Y, Z)")
-        Chart(data = globalMagneticFieldData.toList())
+        Text("Global Magnetic Field via Game Rotation Vector (X, Y, Z)")
+        Chart(data = globalMagneticFieldDataGame.toList())
+        Spacer(modifier = Modifier.height(16.dp))
+
+        Text("Global Magnetic Field via TYPE_ROTATION_VECTOR (X, Y, Z)")
+        Chart(data = globalMagneticFieldDataRotation.toList())
+        Spacer(modifier = Modifier.height(16.dp))
+
+        Text("Global Magnetic Field via Accelerometer + getRotationMatrix (X, Y, Z)")
+        Chart(data = globalMagneticFieldDataTilt.toList())
         Spacer(modifier = Modifier.height(16.dp))
 
         Row(

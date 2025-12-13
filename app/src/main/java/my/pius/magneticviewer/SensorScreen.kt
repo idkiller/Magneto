@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.width
 import androidx.compose.material3.Button
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -195,32 +196,52 @@ fun SensorScreen() {
             .fillMaxSize()
             .statusBarsPadding()
             .navigationBarsPadding()
-            .padding(16.dp)
+            .padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-
-        Text("Device Magnetic Field (X, Y, Z)")
-        Chart(data = magneticFieldData.toList()) // Use toList to pass a stable copy for recomposition
-        Spacer(modifier = Modifier.height(16.dp))
-
-        Text("Global Magnetic Field via Game Rotation Vector (X, Y, Z)")
-        Chart(data = globalMagneticFieldDataGame.toList())
-        Spacer(modifier = Modifier.height(16.dp))
-
-        Text("Global Magnetic Field via TYPE_ROTATION_VECTOR (X, Y, Z)")
-        Chart(data = globalMagneticFieldDataRotation.toList())
-        Spacer(modifier = Modifier.height(16.dp))
-
-        Text("Global Magnetic Field via Accelerometer + getRotationMatrix (X, Y, Z)")
-        Chart(data = globalMagneticFieldDataTilt.toList())
-        Spacer(modifier = Modifier.height(16.dp))
 
         Row(
             modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceEvenly
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            ChartCard(
+                title = "Device Magnetic Field (X, Y, Z)",
+                data = magneticFieldData.toList(),
+                modifier = Modifier.weight(1f)
+            )
+            ChartCard(
+                title = "Global Magnetic Field via Game Rotation Vector (X, Y, Z)",
+                data = globalMagneticFieldDataGame.toList(),
+                modifier = Modifier.weight(1f)
+            )
+        }
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            ChartCard(
+                title = "Global Magnetic Field via TYPE_ROTATION_VECTOR (X, Y, Z)",
+                data = globalMagneticFieldDataRotation.toList(),
+                modifier = Modifier.weight(1f)
+            )
+            ChartCard(
+                title = "Global Magnetic Field via Accelerometer + getRotationMatrix (X, Y, Z)",
+                data = globalMagneticFieldDataTilt.toList(),
+                modifier = Modifier.weight(1f)
+            )
+        }
+
+        Spacer(modifier = Modifier.height(4.dp))
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.Center
         ) {
             Button(onClick = { isRunning = true }) {
                 Text("Start")
             }
+            Spacer(modifier = Modifier.width(12.dp))
             Button(onClick = { isRunning = false }) {
                 Text("Stop")
             }
@@ -229,7 +250,7 @@ fun SensorScreen() {
 }
 
 @Composable
-fun Chart(data: List<SensorDataPoint>) {
+fun Chart(data: List<SensorDataPoint>, modifier: Modifier = Modifier) {
     // The `data` list is now guaranteed to trigger recomposition correctly.
     val entriesX = data.map { Entry(it.timeOffset, it.x) }
     val entriesY = data.map { Entry(it.timeOffset, it.y) }
@@ -268,8 +289,22 @@ fun Chart(data: List<SensorDataPoint>) {
             chart.notifyDataSetChanged()
             chart.invalidate()
         },
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(250.dp)
+        modifier = modifier
     )
+}
+
+@Composable
+private fun ChartCard(title: String, data: List<SensorDataPoint>, modifier: Modifier = Modifier) {
+    Column(
+        modifier = modifier,
+        verticalArrangement = Arrangement.spacedBy(4.dp)
+    ) {
+        Text(title)
+        Chart(
+            data = data,
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(150.dp)
+        )
+    }
 }

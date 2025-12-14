@@ -30,7 +30,9 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.core.graphics.rotationMatrix
 import com.github.mikephil.charting.charts.LineChart
 import com.github.mikephil.charting.components.XAxis
 import com.github.mikephil.charting.data.Entry
@@ -52,6 +54,7 @@ fun SensorScreen() {
     val globalMagneticFieldDataGame = remember { mutableStateListOf<SensorDataPoint>() }
     val globalMagneticFieldDataRotation = remember { mutableStateListOf<SensorDataPoint>() }
     val globalMagneticFieldDataTilt = remember { mutableStateListOf<SensorDataPoint>() }
+    val globalMagneticFieldDataRotation2 = remember { mutableStateListOf<SensorDataPoint>() }
 
     fun rotateByQuaternion(vec: FloatArray, quat: FloatArray): FloatArray {
         val qw = quat[0]; val qx = quat[1]; val qy = quat[2]; val qz = quat[3]
@@ -75,6 +78,7 @@ fun SensorScreen() {
             // Initialize with identity quaternion [w, x, y, z] for no rotation
             private val rotationQuaternion = floatArrayOf(1f, 0f, 0f, 0f)
             private val rotationQuaternionFused = floatArrayOf(1f, 0f, 0f, 0f)
+            private val rotationMatrix = floatArrayOf(0f, 0f, 0f, 0f, 0f, 0f, 0f, 0f, 0f)
             private val gravity = FloatArray(3)
             private val geomagnetic = FloatArray(3)
             private var hasGravity = false
@@ -89,6 +93,7 @@ fun SensorScreen() {
                     }
                     Sensor.TYPE_ROTATION_VECTOR -> {
                         SensorManager.getQuaternionFromVector(rotationQuaternionFused, event.values)
+                        SensorManager.getRotationMatrixFromVector(rotationMatrix, event.values)
                     }
                     Sensor.TYPE_ACCELEROMETER -> {
                         // Gravity vector is used to tilt-compensate the magnetometer with getRotationMatrix
@@ -155,6 +160,16 @@ fun SensorScreen() {
                                     globalMagneticFieldDataTilt.removeAt(0)
                                 }
                             }
+                        }
+
+                        globalMagneticFieldDataRotation2.add(SensorDataPoint(
+                            timeOffset,
+                            rotationMatrix[0] * magneticValues[0] + rotationMatrix[1] * magneticValues[1] + rotationMatrix[2] * magneticValues[2],
+                            rotationMatrix[3] * magneticValues[0] + rotationMatrix[4] * magneticValues[1] + rotationMatrix[5] * magneticValues[2],
+                            rotationMatrix[6] * magneticValues[0] + rotationMatrix[7] * magneticValues[1] + rotationMatrix[8] * magneticValues[2]
+                        ))
+                        while (globalMagneticFieldDataRotation2.isNotEmpty() && globalMagneticFieldDataRotation2.first().timeOffset < timeOffset - 3f) {
+                            globalMagneticFieldDataRotation2.removeAt(0)
                         }
                     }
                 }
@@ -232,6 +247,17 @@ fun SensorScreen() {
             )
         }
 
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            ChartCard(
+                title = "Global Magnetic Field via TYPE_ROTATION_VECTOR + getRotationMatrixFromVector",
+                data = globalMagneticFieldDataRotation2.toList(),
+                modifier = Modifier.weight(1f)
+            )
+        }
+
         Spacer(modifier = Modifier.height(4.dp))
 
         Row(
@@ -299,7 +325,7 @@ private fun ChartCard(title: String, data: List<SensorDataPoint>, modifier: Modi
         modifier = modifier,
         verticalArrangement = Arrangement.spacedBy(4.dp)
     ) {
-        Text(title)
+        Text(title, fontSize = 9.sp)
         Chart(
             data = data,
             modifier = Modifier

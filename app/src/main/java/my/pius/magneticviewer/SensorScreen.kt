@@ -6,6 +6,7 @@ import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
 import android.hardware.SensorManager
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -14,8 +15,11 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.background
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -28,6 +32,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -55,6 +60,31 @@ fun SensorScreen() {
     val globalMagneticFieldDataRotation = remember { mutableStateListOf<SensorDataPoint>() }
     val globalMagneticFieldDataTilt = remember { mutableStateListOf<SensorDataPoint>() }
     val globalMagneticFieldDataRotation2 = remember { mutableStateListOf<SensorDataPoint>() }
+
+    var gameRotationAccuracy by remember { mutableStateOf(SensorManager.SENSOR_STATUS_UNRELIABLE) }
+    var rotationVectorAccuracy by remember { mutableStateOf(SensorManager.SENSOR_STATUS_UNRELIABLE) }
+    var accelerometerAccuracy by remember { mutableStateOf(SensorManager.SENSOR_STATUS_UNRELIABLE) }
+    var magnetometerAccuracy by remember { mutableStateOf(SensorManager.SENSOR_STATUS_UNRELIABLE) }
+
+    fun accuracyColor(accuracy: Int): Color = when (accuracy) {
+        SensorManager.SENSOR_STATUS_ACCURACY_HIGH -> Color(0xFF4CAF50)
+        SensorManager.SENSOR_STATUS_ACCURACY_MEDIUM -> Color(0xFFFFC107)
+        SensorManager.SENSOR_STATUS_ACCURACY_LOW -> Color(0xFFFF9800)
+        SensorManager.SENSOR_STATUS_UNRELIABLE -> Color(0xFFF44336)
+        else -> Color.Gray
+    }
+
+    @Composable
+    fun AccuracyIndicator(label: String, accuracy: Int, size: Dp = 12.dp) {
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            Box(
+                modifier = Modifier
+                    .size(size)
+                    .background(accuracyColor(accuracy), CircleShape)
+            )
+            Text(label, fontSize = 12.sp)
+        }
+    }
 
     fun rotateByQuaternion(vec: FloatArray, quat: FloatArray): FloatArray {
         val qw = quat[0]; val qx = quat[1]; val qy = quat[2]; val qz = quat[3]
@@ -113,13 +143,7 @@ fun SensorScreen() {
                             magneticFieldData.removeAt(0)
                         }
 
-                        val inverseQuaternion = floatArrayOf(
-                            rotationQuaternion[0],
-                            -rotationQuaternion[1],
-                            -rotationQuaternion[2],
-                            -rotationQuaternion[3]
-                        )
-                        val globalMagneticFieldGame = rotateByQuaternion(magneticValues, inverseQuaternion)
+                        val globalMagneticFieldGame = rotateByQuaternion(magneticValues, rotationQuaternion)
                         globalMagneticFieldDataGame.add(
                             SensorDataPoint(timeOffset, globalMagneticFieldGame[0], globalMagneticFieldGame[1], globalMagneticFieldGame[2])
                         )
@@ -127,13 +151,7 @@ fun SensorScreen() {
                             globalMagneticFieldDataGame.removeAt(0)
                         }
 
-                        val inverseQuaternionFused = floatArrayOf(
-                            rotationQuaternionFused[0],
-                            -rotationQuaternionFused[1],
-                            -rotationQuaternionFused[2],
-                            -rotationQuaternionFused[3]
-                        )
-                        val globalMagneticFieldRotation = rotateByQuaternion(magneticValues, inverseQuaternionFused)
+                        val globalMagneticFieldRotation = rotateByQuaternion(magneticValues, rotationQuaternionFused)
                         globalMagneticFieldDataRotation.add(
                             SensorDataPoint(
                                 timeOffset,
@@ -175,7 +193,14 @@ fun SensorScreen() {
                 }
             }
 
-            override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {}
+            override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {
+                when (sensor?.type) {
+                    Sensor.TYPE_GAME_ROTATION_VECTOR -> gameRotationAccuracy = accuracy
+                    Sensor.TYPE_ROTATION_VECTOR -> rotationVectorAccuracy = accuracy
+                    Sensor.TYPE_ACCELEROMETER -> accelerometerAccuracy = accuracy
+                    Sensor.TYPE_MAGNETIC_FIELD -> magnetometerAccuracy = accuracy
+                }
+            }
         }
     }
 
@@ -214,6 +239,18 @@ fun SensorScreen() {
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
+
+        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text("Sensor accuracy", fontSize = 14.sp)
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                AccuracyIndicator("Game Rotation", gameRotationAccuracy)
+                AccuracyIndicator("Rotation Vector", rotationVectorAccuracy)
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                AccuracyIndicator("Accelerometer", accelerometerAccuracy)
+                AccuracyIndicator("Magnetometer", magnetometerAccuracy)
+            }
+        }
 
         Row(
             modifier = Modifier.fillMaxWidth(),
